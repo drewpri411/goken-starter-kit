@@ -27,7 +27,7 @@ A Next.js starter kit showcasing Goken's Text-to-Speech API with both HTTP strea
 
 1. Clone the repository:
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/drewpri411/goken-starter-kit.git
 cd goken-starter-kit
 ```
 
