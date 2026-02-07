@@ -2,7 +2,7 @@
 import { HTTPAudioStreaming } from "@/components/ui/http-audio-streaming";
 import { VoiceAgent } from "@/components/ui/voice-agent";
 
-export default function TTSPlayground() {
+export default function GokenStarterKit() {
     return (
         <div className="min-h-screen bg-black text-white flex flex-col">
             {/* Main Content */}

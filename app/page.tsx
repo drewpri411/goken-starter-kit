@@ -1,5 +1,5 @@
-import TTSPlayground from "@/components/playground/tts-playground";
+import GokenStarterKit from "@/components/playground/goken-starter-kit";
 
 export default function Home() {
-    return <TTSPlayground />;
+    return <GokenStarterKit />;
 }
