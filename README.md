@@ -11,10 +11,9 @@ A Next.js starter kit showcasing Goken's Text-to-Speech API with both HTTP strea
 - PCM audio format (24kHz, float32 LE)
 
 ### Voice Agent
-- WebSocket-based real-time voice interaction
-- Speech recognition integration
+- Real-time voice input with speech recognition
 - Live audio visualization during recording
-- Automatic transcript-to-speech conversion
+- Automatic transcript-to-speech via proxy API (no API key on client)
 - Voice selection for TTS output
 
 ## Getting Started
@@ -39,8 +38,10 @@ npm install
 3. Set up environment variables:
 Create a `.env.local` file in the root directory:
 ```env
-NEXT_PUBLIC_GOKEN_API_KEY=kk_your_api_key_here
+# Server-only (recommended): key is never sent to the browser. Used by /api/tts/stream.
+GOKEN_API_KEY=kk_your_api_key_here
 ```
+The app proxies TTS through the Next.js API, so the key stays on the server. Do **not** use `NEXT_PUBLIC_` for the API key; that would expose it in the client bundle.
 
 4. Run the development server:
 ```bash
@@ -54,6 +55,10 @@ npm run dev
 ```
 goken-starter-kit/
 ├── app/
+│   ├── api/
+│   │   └── tts/
+│   │       └── stream/
+│   │           └── route.ts     # TTS proxy (keeps API key on server)
 │   ├── page.tsx                 # Main page
 │   ├── layout.tsx               # Root layout
 │   └── globals.css              # Global styles
@@ -61,18 +66,20 @@ goken-starter-kit/
 │   ├── playground/
 │   │   └── goken-starter-kit.tsx  # Main demo component
 │   └── ui/
-│       ├── http-audio-streaming.tsx  # HTTP TTS component
-│       └── voice-agent.tsx           # WebSocket voice agent
+│       ├── http-audio-streaming.tsx  # HTTP TTS (uses /api/tts/stream)
+│       └── voice-agent.tsx           # Voice agent (uses /api/tts/stream)
 ├── lib/
 │   └── utils.ts                 # Utility functions
-└── .env.local                   # Environment variables (create this)
+└── .env.local                   # GOKEN_API_KEY (create this)
 ```
 
 ## API Endpoints
 
-### HTTP Streaming
-- **Endpoint**: `POST https://smirksteveyt--goken-web-app.modal.run/stream`
-- **Headers**: `X-API-Key: your_api_key`
+The app uses a **Next.js API proxy** so the Goken API key never leaves the server.
+
+### Proxy (used by the app)
+- **Endpoint**: `POST /api/tts/stream`
+- **Headers**: `Content-Type: application/json` (no API key; key is read from `GOKEN_API_KEY` on the server)
 - **Body**:
 ```json
 {
@@ -81,22 +88,7 @@ goken-starter-kit/
   "speed": 1.0
 }
 ```
-
-### WebSocket Streaming
-- **Endpoint**: `wss://smirksteveyt--goken-web-app.modal.run/ws/tts`
-- **Auth Flow**:
-  1. Connect to WebSocket
-  2. Receive `{"event": "auth_required"}`
-  3. Send `{"api_key": "kk_xxxxxxxx"}`
-  4. Receive `{"event": "ready"}`
-- **TTS Request**:
-```json
-{
-  "text": "Your text here",
-  "voice": "am_puck",
-  "speed": 1.0
-}
-```
+- **Response**: Binary PCM audio (float32 LE, 24 kHz)
 
 ## Available Voices
 
