@@ -11,7 +11,7 @@ const VOICES = [
     { id: "af_sarah" as Voice, name: "Sarah", gender: "Female" },
 ];
 
-const WS_URL = "wss://goken--goken-web-app.modal.run/ws/tts";
+const WS_URL = "wss://smirksteveyt--goken-web-app.modal.run/ws/tts";
 
 interface VoiceAgentProps {
     apiKey?: string;

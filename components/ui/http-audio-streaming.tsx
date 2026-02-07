@@ -10,7 +10,7 @@ const VOICES = [
     { id: "af_sarah" as Voice, name: "Sarah", gender: "Female" },
 ];
 
-const API_URL = "https://goken--goken-web-app.modal.run/stream";
+const API_URL = "https://smirksteveyt--goken-web-app.modal.run/stream";
 
 interface HTTPAudioStreamingProps {
     apiKey?: string;
