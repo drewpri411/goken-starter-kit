@@ -43,6 +43,9 @@ export function VoiceAgent({
     const recognitionRef = useRef<any>(null);
     const audioChunksRef = useRef<Float32Array[]>([]);
     const sampleRateRef = useRef<number>(24000);
+    /** Set when "done" is received; play when first blob arrives (handles done-before-blobs ordering) */
+    const ttsDoneRef = useRef(false);
+    const ttsPlayTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // Recording Refs
     const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -50,6 +53,8 @@ export function VoiceAgent({
     const audioContextRef = useRef<AudioContext | null>(null);
     const analyserRef = useRef<AnalyserNode | null>(null);
     const animationFrameRef = useRef<number | null>(null);
+    /** Live transcript (final + interim) for sending on stop; avoids stale state */
+    const transcriptRef = useRef("");
 
     useEffect(() => {
         setIsClient(true);
@@ -82,7 +87,11 @@ export function VoiceAgent({
 
     // WebSocket Functions
     const playAudioChunks = useCallback(async () => {
-        if (audioChunksRef.current.length === 0) return;
+        if (audioChunksRef.current.length === 0) {
+            console.log("[VoiceAgent] playAudioChunks: no chunks to play");
+            return;
+        }
+        console.log("[VoiceAgent] Playing", audioChunksRef.current.length, "audio chunks");
 
         if (!wsAudioCtxRef.current) {
             wsAudioCtxRef.current = new AudioContext({ sampleRate: sampleRateRef.current });
@@ -107,13 +116,17 @@ export function VoiceAgent({
     }, []);
 
     const connectWebSocket = useCallback(() => {
-        if (wsRef.current?.readyState === WebSocket.OPEN) return;
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+            console.log("[VoiceAgent] WebSocket already open, skipping connect");
+            return;
+        }
 
+        console.log("[VoiceAgent] Connecting WebSocket to", WS_URL);
         setWsStatus("connecting");
         wsRef.current = new WebSocket(WS_URL);
 
         wsRef.current.onopen = () => {
-            console.log("WebSocket connected");
+            console.log("[VoiceAgent] WebSocket connected");
         };
 
         wsRef.current.onmessage = async (event) => {
@@ -121,56 +134,94 @@ export function VoiceAgent({
                 const arrayBuffer = await event.data.arrayBuffer();
                 const floatData = new Float32Array(arrayBuffer);
                 audioChunksRef.current.push(floatData);
+                if (ttsDoneRef.current) {
+                    ttsDoneRef.current = false;
+                    if (ttsPlayTimeoutRef.current) {
+                        clearTimeout(ttsPlayTimeoutRef.current);
+                        ttsPlayTimeoutRef.current = null;
+                    }
+                    // "done" arrived before blobs; play after short delay to allow more blobs in same burst
+                    ttsPlayTimeoutRef.current = setTimeout(() => {
+                        ttsPlayTimeoutRef.current = null;
+                        console.log("[VoiceAgent] TTS playing", audioChunksRef.current.length, "chunks (received after done)");
+                        playAudioChunks();
+                    }, 80);
+                }
             } else {
                 const data = JSON.parse(event.data);
+                console.log("[VoiceAgent] WS message:", data.event, data);
 
                 switch (data.event) {
                     case "auth_required":
+                        console.log("[VoiceAgent] Sending auth");
                         wsRef.current?.send(JSON.stringify({
                             api_key: apiKey || process.env.NEXT_PUBLIC_GOKEN_API_KEY || ""
                         }));
                         break;
                     case "ready":
+                        console.log("[VoiceAgent] Server ready, TTS available");
                         setWsStatus("ready");
                         break;
                     case "chunk_start":
                         sampleRateRef.current = data.sample_rate || 24000;
                         audioChunksRef.current = [];
+                        ttsDoneRef.current = false;
+                        if (ttsPlayTimeoutRef.current) {
+                            clearTimeout(ttsPlayTimeoutRef.current);
+                            ttsPlayTimeoutRef.current = null;
+                        }
+                        console.log("[VoiceAgent] Chunk start, sample_rate:", sampleRateRef.current);
                         break;
                     case "done":
                         setIsProcessing(false);
-                        playAudioChunks();
+                        ttsDoneRef.current = true;
+                        // If we already have chunks (server sent in order), play soon; else play when first blob arrives
+                        if (audioChunksRef.current.length > 0) {
+                            ttsPlayTimeoutRef.current = setTimeout(() => {
+                                ttsPlayTimeoutRef.current = null;
+                                console.log("[VoiceAgent] TTS done, playing", audioChunksRef.current.length, "chunks");
+                                playAudioChunks();
+                            }, 0);
+                        }
                         break;
                     case "error":
                         setWsStatus("error");
-                        console.error("WebSocket error:", data.message);
+                        console.error("[VoiceAgent] WebSocket error:", data.message);
                         break;
                 }
             }
         };
 
         wsRef.current.onerror = () => {
+            console.error("[VoiceAgent] WebSocket onerror");
             setWsStatus("error");
         };
 
-        wsRef.current.onclose = () => {
+        wsRef.current.onclose = (event) => {
+            console.log("[VoiceAgent] WebSocket closed", event.code, event.reason);
             setWsStatus("disconnected");
         };
     }, [playAudioChunks, apiKey]);
 
     const sendTextToTTS = useCallback((text: string) => {
-        if (wsRef.current?.readyState !== WebSocket.OPEN || wsStatus !== "ready") return;
+        if (wsRef.current?.readyState !== WebSocket.OPEN) {
+            console.log("[VoiceAgent] sendTextToTTS skipped: WebSocket not open", wsRef.current?.readyState);
+            return;
+        }
+        if (wsStatus !== "ready") {
+            console.log("[VoiceAgent] sendTextToTTS skipped: not ready, wsStatus=", wsStatus);
+            return;
+        }
 
+        const payload = { text, voice: wsVoice, speed: 1.0 };
+        console.log("[VoiceAgent] Sending TTS request:", { ...payload, textLength: text.length });
         setIsProcessing(true);
-        wsRef.current.send(JSON.stringify({
-            text,
-            voice: wsVoice,
-            speed: 1.0
-        }));
+        wsRef.current.send(JSON.stringify(payload));
     }, [wsStatus, wsVoice]);
 
     // Recording Functions
     const startRecording = useCallback(async () => {
+        console.log("[VoiceAgent] Start recording");
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
@@ -189,6 +240,7 @@ export function VoiceAgent({
             setIsRecording(true);
             setTime(0);
             setTranscript("");
+            transcriptRef.current = "";
 
             // Start timer
             timerRef.current = setInterval(() => {
@@ -207,24 +259,26 @@ export function VoiceAgent({
 
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 recognitionRef.current.onresult = (event: any) => {
-                    let interimTranscript = '';
-                    for (let i = event.resultIndex; i < event.results.length; i++) {
-                        if (event.results[i].isFinal) {
-                            setTranscript(prev => prev + event.results[i][0].transcript + ' ');
-                        } else {
-                            interimTranscript += event.results[i][0].transcript;
-                        }
+                    let full = "";
+                    for (let i = 0; i < event.results.length; i++) {
+                        full += event.results[i][0].transcript;
+                        if (event.results[i].isFinal) full += " ";
                     }
+                    transcriptRef.current = full;
+                    setTranscript(full);
                 };
 
                 recognitionRef.current.start();
+                console.log("[VoiceAgent] Speech recognition started");
             }
         } catch (error) {
-            console.error("Failed to start recording:", error);
+            console.error("[VoiceAgent] Failed to start recording:", error);
         }
     }, [analyzeAudio]);
 
     const stopRecording = useCallback(() => {
+        const textToSend = transcriptRef.current.trim();
+        console.log("[VoiceAgent] Stop recording, transcript:", JSON.stringify(textToSend));
         if (mediaRecorderRef.current) {
             mediaRecorderRef.current.stop();
             mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
@@ -254,11 +308,14 @@ export function VoiceAgent({
         setIsRecording(false);
         setAudioLevels(Array(visualizerBars).fill(0));
 
-        // Send the transcript to TTS
-        if (transcript.trim()) {
-            sendTextToTTS(transcript);
+        // Send the transcript to TTS (from ref so we have latest final + interim)
+        if (textToSend) {
+            console.log("[VoiceAgent] Sending transcript to TTS:", textToSend.slice(0, 80) + (textToSend.length > 80 ? "..." : ""));
+            sendTextToTTS(textToSend);
+        } else {
+            console.log("[VoiceAgent] No transcript to send (empty or whitespace)");
         }
-    }, [visualizerBars, transcript, sendTextToTTS]);
+    }, [visualizerBars, sendTextToTTS]);
 
     // Connect WebSocket on mount
     useEffect(() => {
@@ -267,6 +324,10 @@ export function VoiceAgent({
         return () => {
             if (wsRef.current) {
                 wsRef.current.close();
+            }
+            if (ttsPlayTimeoutRef.current) {
+                clearTimeout(ttsPlayTimeoutRef.current);
+                ttsPlayTimeoutRef.current = null;
             }
             if (recognitionRef.current) {
                 recognitionRef.current.stop();
