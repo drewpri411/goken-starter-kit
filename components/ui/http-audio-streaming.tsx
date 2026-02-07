@@ -10,15 +10,13 @@ const VOICES = [
     { id: "af_sarah" as Voice, name: "Sarah", gender: "Female" },
 ];
 
-const API_URL = "https://smirksteveyt--goken-web-app.modal.run/stream";
+const API_URL = "/api/tts/stream";
 
 interface HTTPAudioStreamingProps {
-    apiKey?: string;
     className?: string;
 }
 
 export function HTTPAudioStreaming({
-    apiKey,
     className,
 }: HTTPAudioStreamingProps) {
     const [voice, setVoice] = useState<Voice>("am_puck");
@@ -52,10 +50,7 @@ export function HTTPAudioStreaming({
 
             const response = await fetch(API_URL, {
                 method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "X-API-Key": apiKey || process.env.NEXT_PUBLIC_GOKEN_API_KEY || "",
-                },
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ text, voice, speed }),
             });
 
